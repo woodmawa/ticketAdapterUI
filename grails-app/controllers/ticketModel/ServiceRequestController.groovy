@@ -1,6 +1,11 @@
 package ticketModel
 
+import grails.async.Promise
 import grails.validation.ValidationException
+import remoteTicketAdapterProxy.RemoteRequestService
+
+import java.util.concurrent.TimeUnit
+
 import static org.springframework.http.HttpStatus.*
 
 class ServiceRequestController {
@@ -9,10 +14,20 @@ class ServiceRequestController {
 
     ServiceRequestService serviceRequestService
 
+    //inject my special remote service handler bean into controller
+    //RemoteRequestService remoteRequestService
+
     static allowedMethods = [save: "POST", update: "PUT", delete: "DELETE"]
 
     def index(Integer max) {
         params.max = Math.min(max ?: 10, 100)
+
+        //test my remote service here
+
+        /*Promise p=  remoteRequestService.getRequestListSize()
+        def json =  p.get(2, TimeUnit.SECONDS)
+        Long rRequestListSize = json.getLong("requestListSize")*/
+
         respond serviceRequestService.list(params), model:[serviceRequestCount: serviceRequestService.count()]
     }
 
