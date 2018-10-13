@@ -9,8 +9,10 @@ import grails.core.GrailsApplication
 import grails.gorm.services.Service
 import grails.util.Holders
 import groovy.json.JsonSlurper
-import io.vertx.core.json.JsonObject
 import io.vertx.ext.web.client.HttpResponse
+import org.grails.web.json.JSONArray
+import org.grails.web.json.JSONElement
+import org.grails.web.json.JSONObject
 import portfolioModel.ProductOffering
 import ticketModel.BillOfMaterials
 import ticketModel.LineItem
@@ -29,8 +31,8 @@ class RemoteRequestService {
 
     //cheat inection not working - inject by hand
     GrailsApplication grailsApplication  = Holders.grailsApplication
-    RequestTicketClientAdapterVerticle remoteRequestClient
-    def uri
+    RequestTicketClientAdapter remoteRequestClient
+    String  uri
 
     boolean initialised = false
 
@@ -38,46 +40,27 @@ class RemoteRequestService {
     @PostConstruct
     def initialise () {
         uri = grailsApplication.config.getProperty( "ticketAdapterUI.request.defaultUri")
+        println "post contruct invoked on RemoteRequestService set uri as $uri"
 
-        assert remoteRequestClient //= new RequestTicketClientAdapterVerticle() //grailsApplication.config.remoteRequestClient
-        remoteRequestClient.configureHttpClient()
-        initialised = true
+        assert remoteRequestClient
+     }
+
+    JSONElement getJsonRequestList(String uri) {
+
+        remoteRequestClient.apiGet("$uri")
+
     }
 
-    Promise getJsonRequestList() {
-        if (!initialised)
-            initialise ()
-        Promise<JsonObject> result = Promises.createPromise()
-
-        remoteRequestClient.apiGet(uri) { HttpResponse response  ->
-            result.accept(response.bodyAsJsonObject())
-            //result << json  //set DF result
-        }
-
-        result
-    }
 
     //get the size of the remote request list
-    Promise<JsonObject> getRequestListSize() {
-        if (!initialised) {
-            initialise()
-            println "initialised http client when calling getRequestListSize()"
-        }
-        Promise result = Promises.createPromise()
-
-        println "issued remote getRequestList size on $remoteRequestClient.host:$remoteRequestClient.port/$uri/count"
-        remoteRequestClient.apiGet("$uri/count") { HttpResponse response  ->
-            result.accept(response.bodyAsJsonObject())
-        }
-
-        println "return promise for size from getRequestListSize()"
-
-        result
+    long getRequestListSize(uri) {
+        JSONObject json = remoteRequestClient.apiGet("$uri/count")
+        json.getLong("requestListSize")
     }
 
     //hand crafted for now - returns list of cached Domain objects
     //persisted in local gorm cache repository to drive the UI
-    def bindJsonToDomainServiceRequestList(JsonObject json) {
+    def bindJsonToDomainServiceRequestList(JSONObject json) {
 
         //create unsaved domain objects
         Customer customer
@@ -85,15 +68,18 @@ class RemoteRequestService {
 
         JsonSlurper slurper = new JsonSlurper ()
 
-        Map graph = slurper.parseText (json.encode ())
+        String resList = json.toString()
+        Map graph = slurper.parseText (json.toString())
         List rlist = graph.requestList
-        println "service bind to request list received : $graph"
+        println "service bind to request list received : $rlist with size ${rlist.size()}"
 
         def result
         result = rlist.collect {row ->
 
-            def name = row.entityData.attributes.customer.name
-            def rcid = row.entityData.attributes.customer.id
+            println "processing row : $row"
+            def name = row.entityData?.attributes?.customer.name
+            def rcid = row.entityData?.attributes?.customer.id
+            assert name
             //Customer cust = new Customer(id:id, name:name)
             //check if customer doesnt already exists in the Domain cache
             def domainCustomer
@@ -120,7 +106,7 @@ class RemoteRequestService {
                 serviceRequest.rid = Long.parseLong(row.entityData.id)  //use top level entry under data
                 serviceRequest.dateCreated = LocalDateTime.parse(row.entityData.attributes?.createdDate.value)
                 serviceRequest.title = row.entityData.attributes?.title.value
-                serviceRequest.customerSummary = row.entityData.attributes?.customer.value
+                serviceRequest.customerSummary = domainCustomer.toString()
                 serviceRequest.status = row.entityData.attributes?.status.value
                 serviceRequest.requestIdentifier = row.entityData.attributes?.requestIdentifier.value
                 serviceRequest.priority = row.entityData.attributes?.priority.value
@@ -142,17 +128,17 @@ class RemoteRequestService {
                         //serviceRequest.bom = bindMapToDomainBom(rBom)
                 }
                 sr = serviceRequest.save (failOnError: true )
-                println "SR is not in cache to create it using rid :$rid"
+                println "SR is not in cache, tried to create :${sr.toString()}"
 
 
             } else {
                 println "SR was in cache, now updaing  using rid lookup :$rid"
                 //if you read serviceRequest first need to back back fill on summary
-                sr.customerSummary = row.entityData.attributes?.customer.value
+                sr.customerSummary = domainCustomer.toString()
                 sr.status = row.entityData.attributes?.status.value
                 sr.title = row.entityData.attributes?.title.value
                 sr.save(failOnError: true )
-                println "updated cached customer  : $domainCustomer"
+                println "updated cached SR  : $sr"
             }
             //return the serviceRequest into collection
             sr
@@ -186,16 +172,16 @@ class RemoteRequestService {
 
 
 
-    ServiceRequest bindJsonToDomainServiceRequestEntity(JsonObject json) {
+    ServiceRequest bindJsonToDomainServiceRequestEntity(JSONObject json) {
         JsonSlurper slurper = new JsonSlurper ()
 
-        Map graph = slurper.parseText (json.encode ())
+        Map graph = slurper.parseText (json.toString ())
         def entity = graph.entityData
         def type = entity.type
         def sr_id = entity.id
 
         Customer domainCustomer
-        if (entity.attributes.customer){
+        if (entity?.attributes?.customer){
             //if we havent seen the customer record better create it now
             if (!(domainCustomer = Customer.findByRid((entity.attributes.customer.id)))) {
                 Customer customer = new Customer ()
@@ -221,10 +207,10 @@ class RemoteRequestService {
             domainCustomer.addToRequests(serviceRequest)
 
         //check if bom present
+        BillOfMaterials bom
         def rBomDetail = entity.attributes?.bom.value.data
         if (rBomDetail) {
             def rBasket = rBomDetail?.mapAttributes?.basket
-            BillOfMaterials bom
             if (serviceRequest.bom == null)
                 bom = new BillOfMaterials()
             else
@@ -280,7 +266,7 @@ class RemoteRequestService {
 
                 }
             }
-
+            println "adding bom to cache : $bom  with basket size ${bom.basket.size()}"
             bom.save(failOnError:true)
         }
 
@@ -291,16 +277,7 @@ class RemoteRequestService {
 
     }
 
-    Promise getJsonRequestById( Long id) {
-        if (!initialised)
-            initialise ()
-        Promise result = Promises.createPromise()
-
-
-        remoteRequestClient.apiGet("$uri/$id") { HttpResponse response  ->
-            result.accept(response.bodyAsJsonObject())
-        }
-
-        result
+    JSONObject getJsonRequestById( Long id) {
+        remoteRequestClient.apiGet("$uri/$id")
     }
 }

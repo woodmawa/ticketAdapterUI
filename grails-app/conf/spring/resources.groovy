@@ -5,6 +5,7 @@ import io.vertx.core.Vertx
 import io.vertx.ext.web.client.WebClient
 import io.vertx.ext.web.client.WebClientOptions
 import remoteTicketAdapterProxy.RemoteRequestService
+import remoteTicketAdapterProxy.RequestTicketClientAdapter
 import remoteTicketAdapterProxy.RequestTicketClientAdapterVerticle
 import ticketModel.ServiceRequest
 import java.time.LocalDateTime
@@ -18,8 +19,16 @@ beans = {
         remoteRequestClient = ref ("remoteRequestClient")   //inject remote request client
     }
 
+    remoteRequestClient (RequestTicketClientAdapter) {
+        //set external dependendencies
+        host = grailsApplication.config.ticketAdapterUI.request.host
+        port = grailsApplication.config.ticketAdapterUI.request.port
+        protocol = grailsApplication.config.ticketAdapterUI.request.protocol
+
+    }
+
     //setup remote vertx request bean
-    remoteRequestClient (RequestTicketClientAdapterVerticle) {
+    remoteRequestClientVerticle (RequestTicketClientAdapterVerticle) {
         host = grailsApplication.config.ticketAdapterUI.request.host
         port = grailsApplication.config.ticketAdapterUI.request.port
         vertx = Vertx.vertx()

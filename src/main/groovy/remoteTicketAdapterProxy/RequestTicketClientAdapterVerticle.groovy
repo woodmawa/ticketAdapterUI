@@ -4,6 +4,8 @@ import grails.config.Config
 import grails.core.support.GrailsConfigurationAware
 import grails.gorm.services.Service
 import grails.gorm.transactions.Transactional
+import grails.plugins.rest.client.RestBuilder
+import grails.plugins.rest.client.RestResponse
 import grails.util.Holders
 import io.vertx.core.AbstractVerticle
 import io.vertx.core.Future
@@ -30,6 +32,7 @@ class RequestTicketClientAdapterVerticle extends AbstractVerticle implements Ver
     String host
     int port
     Config config
+    long timeout = 3000 //default 3 seconds timeout for gets
 
     def grailsApplication  = Holders.grailsApplication  //covers for no injection on non grails artifact class types
 
@@ -145,9 +148,16 @@ class RequestTicketClientAdapterVerticle extends AbstractVerticle implements Ver
 
 
     HttpRequest apiGet (String uri, Closure handler ) {
-         apiGet (client.get(port, host, uri)).send {ar ->
-             HttpResponse<Buffer> getResult
-             if (ar.succeeded()) {
+        error = "" //reset errors
+        HttpRequest<Buffer> request = client.get(port, host, uri)
+        request.putHeader("accept", "application/text")
+        request.timeout(timeout)
+        println "get request dump: " +  request.dump()
+        request.send {ar ->
+            println "ar -> is of type :" + ar.getClass()
+            println "sent request [Get] to host: $host:${port}/$uri to server"
+            HttpResponse<Buffer> getResult
+            if (ar.succeeded()) {
                 //obtain the response
                 getResult = ar.result()
             } else {
@@ -157,16 +167,24 @@ class RequestTicketClientAdapterVerticle extends AbstractVerticle implements Ver
         }
     }
 
-    HttpRequest apiGet (HttpRequest<Buffer> request) {
-        request.putHeader("accept", "application/text")
-        request.method (HttpMethod.GET)
-        request
+    //use grails rest client rather than vertx one
+    def remoteApiGet (String uri) {
+        RestBuilder rest = new RestBuilder ()
+        def url = "http://$host:$port/$uri"
 
+        RestResponse restResponse = rest.get (url)
+        println "sent get request to  : $url "
+        if ( restResponse.statusCode.value() == 200 && restResponse.json ) {
+            return restResponse.json
+        }
+        else
+            null
     }
 
     void apiGet (HttpRequest<Buffer> request, Closure handler) {
         println "sending request [$request.method] to host: ${request.host}:${request.port}" + request.uri + " to server"
         request.host(host).port(port)
+        request.timeout(timeout)
         request.send {ar ->
             HttpResponse<Buffer> getResult
             if (ar.succeeded()) {
